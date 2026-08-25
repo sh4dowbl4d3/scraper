@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const cheerio = require("cheerio");
+const { z } = require("zod");
 
 const USER_AGENT =
   "FlyRankInternship-A9/1.0 (+https://github.com/Nikku2716/scraper)";
@@ -40,7 +41,7 @@ async function fetchAndCache(url, cacheFile) {
 async function discoverBookUrls() {
   let pageUrl = "https://books.toscrape.com/catalogue/page-1.html";
   let pageNum = 1;
-  const allBooks = []; // now stores { url, sourcePage }
+  const allBooks = [];
 
   while (pageUrl) {
     const cacheFile = `catalogue-page-${pageNum}.html`;
@@ -65,7 +66,6 @@ async function discoverBookUrls() {
     }
   }
 
-  // Deduplicate by url, keeping first occurrence's sourcePage
   const seen = new Set();
   const uniqueBooks = [];
   for (const book of allBooks) {
@@ -81,41 +81,86 @@ async function discoverBookUrls() {
   return uniqueBooks;
 }
 
-async function extractBookDetails(bookUrl, sourcePage) {
+async function extractBookDetails(bookUrl, sourcePage, retries = 2) {
   const urlParts = bookUrl.split("/");
   const cacheFile = `book-${urlParts[urlParts.length - 2]}.html`;
 
-  const { html, wasCache } = await fetchAndCache(bookUrl, cacheFile);
-  if (!wasCache) await sleep(500);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const { html, wasCache } = await fetchAndCache(bookUrl, cacheFile);
+      if (!wasCache) await sleep(500);
 
-  const $ = cheerio.load(html);
-  const product = $(".product_page");
+      const $ = cheerio.load(html);
+      const product = $(".product_page");
 
-  const title = product.find("h1").text().trim();
-  const price_text = product.find(".price_color").first().text().trim();
-  const availability_text = product.find(".availability").text().trim();
+      const title = product.find("h1").text().trim();
+      const price_text = product.find(".price_color").first().text().trim();
+      const availability_text = product.find(".availability").text().trim();
 
-  const ratingClasses = product.find(".star-rating").attr("class") || "";
-  const rating_text =
-    ratingClasses.split(" ").find((c) => c !== "star-rating") || null;
+      const ratingClasses = product.find(".star-rating").attr("class") || "";
+      const rating_text =
+        ratingClasses.split(" ").find((c) => c !== "star-rating") || null;
 
-  const descriptionEl = $("#product_description").next("p");
-  const description = descriptionEl.length ? descriptionEl.text().trim() : null;
+      const descriptionEl = $("#product_description").next("p");
+      const description = descriptionEl.length
+        ? descriptionEl.text().trim()
+        : null;
+
+      return {
+        title,
+        product_url: bookUrl,
+        price_text,
+        availability_text,
+        rating_text,
+        description,
+        source_page: sourcePage,
+        fetched_at: new Date().toISOString(),
+      };
+    } catch (err) {
+      if (attempt < retries) {
+        console.log(
+          `RETRY ${attempt + 1}/${retries} for ${bookUrl}: ${err.message}`,
+        );
+        await sleep(1000 * (attempt + 1));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+const BookSchema = z.object({
+  title: z.string().min(1),
+  product_url: z.string().url(),
+  price_gbp: z.number().positive(),
+  price_text: z.string(),
+  availability_text: z.string(),
+  rating_text: z.string().nullable(),
+  description: z.string().nullable(),
+  source_page: z.string().url(),
+  fetched_at: z.string(),
+});
+
+function normalizeRecord(raw) {
+  const priceMatch = raw.price_text.match(/[\d.]+/);
+  const price_gbp = priceMatch ? parseFloat(priceMatch[0]) : NaN;
 
   return {
-    title,
-    product_url: bookUrl,
-    price_text,
-    availability_text,
-    rating_text,
-    description,
-    source_page: sourcePage,
-    fetched_at: new Date().toISOString(),
+    title: raw.title,
+    product_url: raw.product_url,
+    price_gbp,
+    price_text: raw.price_text,
+    availability_text: raw.availability_text,
+    rating_text: raw.rating_text,
+    description: raw.description,
+    source_page: raw.source_page,
+    fetched_at: raw.fetched_at,
   };
 }
 
 async function main() {
   const books = await discoverBookUrls();
+
   const validRecords = [];
   const errors = [];
 
@@ -148,36 +193,6 @@ async function main() {
   );
 
   console.log(`valid=${validRecords.length} invalid=${errors.length}`);
-}
-const { z } = require("zod");
-
-const BookSchema = z.object({
-  title: z.string().min(1),
-  product_url: z.string().url(),
-  price_gbp: z.number().positive(),
-  price_text: z.string(),
-  availability_text: z.string(),
-  rating_text: z.string().nullable(),
-  description: z.string().nullable(),
-  source_page: z.string().url(),
-  fetched_at: z.string(),
-});
-
-function normalizeRecord(raw) {
-  const priceMatch = raw.price_text.match(/[\d.]+/);
-  const price_gbp = priceMatch ? parseFloat(priceMatch[0]) : NaN;
-
-  return {
-    title: raw.title,
-    product_url: raw.product_url,
-    price_gbp,
-    price_text: raw.price_text,
-    availability_text: raw.availability_text,
-    rating_text: raw.rating_text,
-    description: raw.description,
-    source_page: raw.source_page,
-    fetched_at: raw.fetched_at,
-  };
 }
 
 main();
