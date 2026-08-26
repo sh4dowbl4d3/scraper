@@ -19,7 +19,7 @@ I will not reuse this code on another site without checking its rules and terms 
 ## Setup & Running
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/sh4dowbl4d3/scraper.git
 cd scraper
 npm install
 node src/index.js
