@@ -165,11 +165,6 @@ async function main() {
   const startTime = Date.now();
   const books = await discoverBookUrls();
 
-  books.push({
-  url: "https://books.toscrape.com/catalogue/this-page-does-not-exist_99999/index.html",
-  sourcePage: "test",
-});
-
   const validRecords = [];
   const errors = [];
   let cacheHits = 0;
