@@ -4,7 +4,7 @@ const cheerio = require("cheerio");
 const { z } = require("zod");
 
 const USER_AGENT =
-  "FlyRankInternship-A9/1.0 (+https://github.com/Nikku2716/scraper)";
+  "FlyRankInternship-A9/1.0 (+https://github.com/sha4dowbl4d3/scraper)";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,7 +29,9 @@ async function fetchAndCache(url, cacheFile) {
   clearTimeout(timeout);
 
   if (response.status !== 200) {
-    throw new Error(`Fetch failed for ${url}: status ${response.status}`);
+    const err = new Error(`Fetch failed for ${url}: status ${response.status}`);
+    err.status = response.status;
+    throw err;
   }
 
   const html = await response.text();
@@ -117,7 +119,8 @@ async function extractBookDetails(bookUrl, sourcePage, retries = 2) {
         fetched_at: new Date().toISOString(),
       };
     } catch (err) {
-      if (attempt < retries) {
+      const isRetryable = err.status === undefined || err.status >= 500;
+      if (isRetryable && attempt < retries) {
         console.log(
           `RETRY ${attempt + 1}/${retries} for ${bookUrl}: ${err.message}`,
         );
@@ -159,10 +162,17 @@ function normalizeRecord(raw) {
 }
 
 async function main() {
+  const startTime = Date.now();
   const books = await discoverBookUrls();
+
+  books.push({
+  url: "https://books.toscrape.com/catalogue/this-page-does-not-exist_99999/index.html",
+  sourcePage: "test",
+});
 
   const validRecords = [];
   const errors = [];
+  let cacheHits = 0;
 
   for (const book of books) {
     try {
@@ -192,7 +202,22 @@ async function main() {
     JSON.stringify(errors, null, 2),
   );
 
+  const runReport = {
+    start_time: new Date(startTime).toISOString(),
+    duration_ms: Date.now() - startTime,
+    pages_fetched: books.length + 3, // 3 catalogue pages + book detail pages
+    valid_records: validRecords.length,
+    invalid_records: errors.length,
+    failed_pages: errors.length,
+  };
+
+  fs.writeFileSync(
+    path.join(__dirname, "..", "output", "run-report.json"),
+    JSON.stringify(runReport, null, 2),
+  );
+
   console.log(`valid=${validRecords.length} invalid=${errors.length}`);
+  console.log(JSON.stringify(runReport, null, 2));
 }
 
 main();
